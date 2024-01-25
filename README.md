@@ -49,6 +49,8 @@ client := ea.NewClientBuilder().
     WithGameID("[game id]").
     WithDSN("[dsn]"). // Optional
     Build()
+// Stops the goroutines running in the background.
+defer client.Close()
 ```
 
 The client configuration can also be read from environment variables if not

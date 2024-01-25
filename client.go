@@ -27,8 +27,8 @@ type (
 		clientID      string
 		clientSecret  string
 		dsn           string
+		httpClient    httpClient
 		errorChan     chan error
-		httpClient    *http.Client
 		flushInterval time.Duration
 		flushCooldown time.Duration
 
@@ -41,6 +41,10 @@ type (
 		queueLock       sync.Mutex
 		eventQueue      []event
 		identifierQueue []identifier
+	}
+
+	httpClient interface {
+		Do(req *http.Request) (*http.Response, error)
 	}
 
 	// Round is a nice way of grouping some events together.
@@ -355,6 +359,10 @@ func (c *Client) send(msg []byte) error {
 		return fmt.Errorf("failed to do request: %w", err)
 	}
 	defer res.Body.Close()
+
+	if res.StatusCode >= 500 {
+		return fmt.Errorf("server returned server error: %d", res.StatusCode)
+	}
 
 	var m map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&m); err != nil {

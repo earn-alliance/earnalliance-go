@@ -3,7 +3,11 @@ package earnalliance
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +25,8 @@ func TestFlush(t *testing.T) {
 			Build()
 		defer client.Close()
 
+		client.httpClient = nil
+
 		err := client.Flush()
 		require.Nil(t, err)
 	})
@@ -30,19 +36,61 @@ func TestFlush(t *testing.T) {
 			WithClientID("a").
 			WithClientSecret("b").
 			WithGameID("c").
-			WithFlushCooldown(5 * time.Second).
+			WithFlushCooldown(1 * time.Second).
 			Build()
 		defer client.Close()
 
-		client.StartGame("asd")
+		var wg sync.WaitGroup
+		wg.Add(1)
 
+		requestCounter := 0
+
+		client.httpClient = &mockHttpClient{
+			handle: func(req *http.Request) (*http.Response, error) {
+				defer wg.Done()
+
+				if requestCounter == 0 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd"`)
+					require.Contains(t, string(b), `"event":"START_GAME"`)
+				} else if requestCounter == 1 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd2"`)
+					require.Contains(t, string(b), `"event":"START_GAME"`)
+				}
+
+				requestCounter++
+
+				return &http.Response{
+					Body: io.NopCloser(strings.NewReader(`{"message":"OK"}`)),
+				}, nil
+			},
+		}
+
+		client.StartGame("asd")
 		err := client.Flush()
-		require.NotNil(t, err)
+		require.Nil(t, err)
+
+		wg.Wait()
+
+		require.Equal(t, 1, requestCounter)
+		require.Empty(t, client.eventQueue)
+
+		wg.Add(1)
+
+		client.StartGame("asd2")
 		err = client.Flush()
 		require.Nil(t, err)
 		require.NotNil(t, client.flushWaiting)
-		time.Sleep(5 * time.Second)
+
+		wg.Wait()
+
 		require.Nil(t, client.flushWaiting)
+		require.Equal(t, 2, requestCounter)
 	})
 
 	t.Run("3 back to back flush calls with one start game, one will fail one will start waiter one will do nothing", func(t *testing.T) {
@@ -50,23 +98,66 @@ func TestFlush(t *testing.T) {
 			WithClientID("a").
 			WithClientSecret("b").
 			WithGameID("c").
-			WithFlushCooldown(5 * time.Second).
+			WithFlushCooldown(1 * time.Second).
 			Build()
 		defer client.Close()
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		requestCounter := 0
+
+		client.httpClient = &mockHttpClient{
+			handle: func(req *http.Request) (*http.Response, error) {
+				defer wg.Done()
+
+				if requestCounter == 0 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd"`)
+					require.Contains(t, string(b), `"event":"START_GAME"`)
+				} else if requestCounter == 1 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd2"`)
+					require.Contains(t, string(b), `"event":"START_GAME"`)
+				}
+
+				requestCounter++
+
+				return &http.Response{
+					Body: io.NopCloser(strings.NewReader(`{"message":"OK"}`)),
+				}, nil
+			},
+		}
 
 		client.StartGame("asd")
 
 		err := client.Flush()
-		require.NotNil(t, err)
+		require.Nil(t, err)
 
+		wg.Wait()
+		require.Equal(t, 1, requestCounter)
+
+		wg.Add(1)
+
+		client.StartGame("asd2")
+
+		// Starts waiter
 		err = client.Flush()
 		require.Nil(t, err)
+		// Does nothing
 		err = client.Flush()
 		require.Nil(t, err)
 
 		require.NotNil(t, client.flushWaiting)
-		time.Sleep(5 * time.Second)
+
+		wg.Wait()
+
 		require.Nil(t, client.flushWaiting)
+		require.Equal(t, 2, requestCounter)
 	})
 
 	t.Run("single flush call with one event", func(t *testing.T) {
@@ -78,10 +169,38 @@ func TestFlush(t *testing.T) {
 			Build()
 		defer client.Close()
 
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		requestCounter := 0
+
+		client.httpClient = &mockHttpClient{
+			handle: func(req *http.Request) (*http.Response, error) {
+				defer wg.Done()
+
+				if requestCounter == 0 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd"`)
+					require.Contains(t, string(b), `"event":"DEATH"`)
+				}
+
+				requestCounter++
+
+				return &http.Response{
+					Body: io.NopCloser(strings.NewReader(`{"message":"OK"}`)),
+				}, nil
+			},
+		}
+
 		client.Track("asd", "DEATH", nil, nil)
 
 		err := client.Flush()
-		require.NotNil(t, err)
+		require.Nil(t, err)
+		wg.Wait()
+		require.Equal(t, 1, requestCounter)
+		require.Empty(t, client.eventQueue)
 	})
 
 	t.Run("flush call, then insert identifier so that another flush is called", func(t *testing.T) {
@@ -89,20 +208,60 @@ func TestFlush(t *testing.T) {
 			WithClientID("a").
 			WithClientSecret("b").
 			WithGameID("c").
-			WithFlushCooldown(5 * time.Second).
+			WithFlushCooldown(1 * time.Second).
 			Build()
 		defer client.Close()
 
-		client.Track("asd", "DEATH", nil, nil)
+		var wg sync.WaitGroup
+		wg.Add(1)
 
+		requestCounter := 0
+
+		client.httpClient = &mockHttpClient{
+			handle: func(req *http.Request) (*http.Response, error) {
+				defer wg.Done()
+
+				if requestCounter == 0 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd"`)
+					require.Contains(t, string(b), `event":"DEATH`)
+				} else if requestCounter == 1 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `identifiers":[{"userId":"asd`)
+					require.Contains(t, string(b), `walletAddress":"yoyo`)
+				}
+
+				requestCounter++
+
+				return &http.Response{
+					Body: io.NopCloser(strings.NewReader(`{"message":"OK"}`)),
+				}, nil
+			},
+		}
+
+		client.Track("asd", "DEATH", nil, nil)
 		err := client.Flush()
-		require.NotNil(t, err)
+		require.Nil(t, err)
+
+		wg.Wait()
+
+		require.Equal(t, 1, requestCounter)
+
+		wg.Add(1)
+
 		client.SetIdentifiers("asd", &Identifiers{
 			WalletAddress: IdentifierFrom("yoyo"),
 		})
 		require.NotNil(t, client.flushWaiting)
-		time.Sleep(5 * time.Second)
+
+		wg.Wait()
+
 		require.Nil(t, client.flushWaiting)
+		require.Equal(t, 2, requestCounter)
 	})
 }
 
@@ -115,6 +274,8 @@ func TestTrack(t *testing.T) {
 			WithFlushCooldown(5 * time.Second).
 			Build()
 		defer client.Close()
+
+		client.httpClient = nil
 
 		client.Track("asd", "kill", PointerFrom(1), nil)
 
@@ -133,6 +294,8 @@ func TestTrack(t *testing.T) {
 			Build()
 		defer client.Close()
 
+		client.httpClient = nil
+
 		client.StartGame("asd")
 
 		e := &client.eventQueue[0]
@@ -150,6 +313,8 @@ func TestTrack(t *testing.T) {
 			WithFlushCooldown(5 * time.Second).
 			Build()
 		defer client.Close()
+
+		client.httpClient = nil
 
 		client.Track("asd", "kill", PointerFrom(1), nil)
 		client.Track("asd2", "kill2", PointerFrom(2), nil)
@@ -178,27 +343,6 @@ func TestTrack(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
 
-		// Cancel test in 5 seconds
-		tick := time.NewTicker(5 * time.Second)
-
-		result := false
-
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case e := <-errChan:
-					result = true
-					fmt.Println(e)
-					return
-				case <-tick.C:
-					result = false
-					return
-				}
-			}
-		}()
-
 		client := NewClientBuilder().
 			WithClientID("a").
 			WithClientSecret("b").
@@ -209,6 +353,28 @@ func TestTrack(t *testing.T) {
 			Build()
 		defer client.Close()
 
+		requestCounter := 0
+
+		client.httpClient = &mockHttpClient{
+			handle: func(req *http.Request) (*http.Response, error) {
+				defer wg.Done()
+
+				if requestCounter == 0 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd"`)
+					require.Contains(t, string(b), `"event":"kill"`)
+				}
+
+				requestCounter++
+
+				return &http.Response{
+					Body: io.NopCloser(strings.NewReader(`{"message":"OK"}`)),
+				}, nil
+			},
+		}
+
 		// This will error due to Flush being called because of the 1 batch size
 		client.Track("asd", "kill", PointerFrom(1), nil)
 
@@ -216,10 +382,7 @@ func TestTrack(t *testing.T) {
 
 		// Event should be removed now
 		require.Len(t, client.eventQueue, 0)
-
-		if !result {
-			t.Fatal("test expired without error being returned")
-		}
+		require.Equal(t, 1, requestCounter)
 	})
 }
 
@@ -230,27 +393,6 @@ func TestSetIdentifiers(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
 
-		// Cancel test in 5 seconds
-		tick := time.NewTicker(5 * time.Second)
-
-		result := false
-
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case e := <-errChan:
-					fmt.Println(e)
-					result = true
-					return
-				case <-tick.C:
-					result = false
-					return
-				}
-			}
-		}()
-
 		client := NewClientBuilder().
 			WithClientID("a").
 			WithClientSecret("b").
@@ -259,6 +401,28 @@ func TestSetIdentifiers(t *testing.T) {
 			WithErrorChannel(errChan).
 			Build()
 		defer client.Close()
+
+		requestCounter := 0
+
+		client.httpClient = &mockHttpClient{
+			handle: func(req *http.Request) (*http.Response, error) {
+				defer wg.Done()
+
+				if requestCounter == 0 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd"`)
+					require.Contains(t, string(b), `"discordId":"yope"`)
+				}
+
+				requestCounter++
+
+				return &http.Response{
+					Body: io.NopCloser(strings.NewReader(`{"message":"OK"}`)),
+				}, nil
+			},
+		}
 
 		// This will error due to Flush being called because of the 1 batch size
 		client.SetIdentifiers("asd", &Identifiers{
@@ -269,10 +433,7 @@ func TestSetIdentifiers(t *testing.T) {
 
 		// Queue should be empty now
 		require.Len(t, client.identifierQueue, 0)
-
-		if !result {
-			t.Fatal("test expired without error being returned")
-		}
+		require.Equal(t, 1, requestCounter)
 	})
 
 	t.Run("two identities", func(t *testing.T) {
@@ -281,40 +442,45 @@ func TestSetIdentifiers(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
 
-		// Cancel test in 5 seconds
-		tick := time.NewTicker(5 * time.Second)
-
-		result := false
-
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case e := <-errChan:
-					fmt.Println(e)
-					result = true
-					return
-				case <-tick.C:
-					result = false
-					return
-				}
-			}
-		}()
-
 		client := NewClientBuilder().
 			WithClientID("a").
 			WithClientSecret("b").
 			WithGameID("c").
-			WithFlushCooldown(5 * time.Second).
+			WithFlushCooldown(1 * time.Second).
 			WithErrorChannel(errChan).
 			Build()
 		defer client.Close()
 
-		// This will error due to Flush being called because of the 1 batch size
+		requestCounter := 0
+
+		client.httpClient = &mockHttpClient{
+			handle: func(req *http.Request) (*http.Response, error) {
+				defer wg.Done()
+
+				if requestCounter == 0 {
+					b, err := io.ReadAll(req.Body)
+					require.Nil(t, err)
+
+					require.Contains(t, string(b), `"userId":"asd"`)
+					require.Contains(t, string(b), `"discordId":"yope"`)
+				}
+
+				requestCounter++
+
+				return &http.Response{
+					Body: io.NopCloser(strings.NewReader(`{"message":"OK"}`)),
+				}, nil
+			},
+		}
+
 		client.SetIdentifiers("asd", &Identifiers{
 			DiscordID: IdentifierFrom("yope"),
 		})
+
+		wg.Wait()
+
+		require.Equal(t, 1, requestCounter)
+		wg.Add(1)
 
 		// This will start the waiter
 		client.SetIdentifiers("asd", &Identifiers{
@@ -325,67 +491,7 @@ func TestSetIdentifiers(t *testing.T) {
 
 		wg.Wait()
 
-		// Queue might still have the 2nd identifier, don't check length here
-
-		if !result {
-			t.Fatal("test expired without error being returned")
-		}
-	})
-
-	t.Run("valid client test", func(t *testing.T) {
-		clientID := os.Getenv("ALLIANCE_CLIENT_ID")
-		clientSecret := os.Getenv("ALLIANCE_CLIENT_SECRET")
-		gameID := os.Getenv("ALLIANCE_GAME_ID")
-
-		if clientID == "" || clientSecret == "" || gameID == "" {
-			t.SkipNow()
-		}
-
-		errChan := make(chan error)
-
-		var wg sync.WaitGroup
-		wg.Add(1)
-
-		// Cancel test in 5 seconds
-		tick := time.NewTicker(5 * time.Second)
-
-		result := true
-
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case e := <-errChan:
-					fmt.Println(e)
-					result = false
-					return
-				case <-tick.C:
-					result = true
-					return
-				}
-			}
-		}()
-
-		client := NewClientBuilder().
-			WithFlushCooldown(5 * time.Second).
-			WithErrorChannel(errChan).
-			Build()
-		defer client.Close()
-
-		client.SetIdentifiers("asd", &Identifiers{
-			DiscordID: IdentifierFrom("yope"),
-		})
-
-		require.Nil(t, client.flushWaiting)
-
-		wg.Wait()
-
-		require.Len(t, client.identifierQueue, 0)
-
-		if !result {
-			t.Fatal("valid client test failed with error")
-		}
+		require.Equal(t, 2, requestCounter)
 	})
 }
 
@@ -398,6 +504,8 @@ func TestRound(t *testing.T) {
 			WithFlushCooldown(5 * time.Second).
 			Build()
 		defer client.Close()
+
+		client.httpClient = nil
 
 		r := client.StartRound("", nil)
 		require.NotEmpty(t, r.id)
@@ -419,6 +527,8 @@ func TestRound(t *testing.T) {
 			Build()
 		defer client.Close()
 
+		client.httpClient = nil
+
 		r := client.StartRound("custom-id", nil)
 		require.Equal(t, "custom-id", r.id)
 		r.Track("asd", "kill", PointerFrom(1), nil)
@@ -438,6 +548,8 @@ func TestRound(t *testing.T) {
 			WithFlushCooldown(5 * time.Second).
 			Build()
 		defer client.Close()
+
+		client.httpClient = nil
 
 		r := client.StartRound("", nil)
 		require.NotEmpty(t, r.id)
@@ -475,6 +587,8 @@ func TestRound(t *testing.T) {
 			Build()
 		defer client.Close()
 
+		client.httpClient = nil
+
 		r := client.StartRound("", Traits{"map": "nuclear_wasteland"})
 		require.NotEmpty(t, r.id)
 		r.Track("asd", "kill", PointerFrom(1), nil)
@@ -495,6 +609,8 @@ func TestRound(t *testing.T) {
 			WithFlushCooldown(5 * time.Second).
 			Build()
 		defer client.Close()
+
+		client.httpClient = nil
 
 		r := client.StartRound("", Traits{"map": "nuclear_wasteland"})
 		require.NotEmpty(t, r.id)
@@ -541,8 +657,8 @@ func TestSign(t *testing.T) {
 	require.Equal(t, "8462555d220af5dff2922abb6c50dbfe36a87918361dbbdb5572bcf637185d92", s)
 }
 
-func TestCompleteValid(t *testing.T) {
-	t.Run("test some tracks", func(t *testing.T) {
+func TestEndToEnd(t *testing.T) {
+	t.Run("test some tracks and identifier", func(t *testing.T) {
 		clientID := os.Getenv("ALLIANCE_CLIENT_ID")
 		clientSecret := os.Getenv("ALLIANCE_CLIENT_SECRET")
 		gameID := os.Getenv("ALLIANCE_GAME_ID")
@@ -853,4 +969,110 @@ func TestIdentifiersJSON(t *testing.T) {
 			require.Equal(t, tc.expected, string(s))
 		})
 	}
+}
+
+type mockHttpClient struct {
+	handle func(req *http.Request) (*http.Response, error)
+}
+
+func (m *mockHttpClient) Do(req *http.Request) (*http.Response, error) {
+	return m.handle(req)
+}
+
+func TestFlushMechanisms(t *testing.T) {
+	errChan := make(chan error)
+	// Dirty way of ensuring no error occurred, the test will simply crash.
+	close(errChan)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	client := NewClientBuilder().
+		WithClientID("a").
+		WithClientSecret("b").
+		WithGameID("c").
+		WithFlushCooldown(1 * time.Second).
+		WithBatchSize(100).
+		WithFlushInterval(3 * time.Second).
+		WithErrorChannel(errChan).
+		Build()
+	defer client.Close()
+
+	requestCounter := 0
+
+	client.httpClient = &mockHttpClient{
+		handle: func(req *http.Request) (*http.Response, error) {
+			defer wg.Done()
+
+			if requestCounter == 0 {
+				b, err := io.ReadAll(req.Body)
+				require.Nil(t, err)
+
+				require.Contains(t, string(b), `"userId":"asd"`)
+				require.Contains(t, string(b), `"event":"kill"`)
+			} else if requestCounter == 1 {
+				b, err := io.ReadAll(req.Body)
+				require.Nil(t, err)
+
+				require.Contains(t, string(b), `"userId":"asd"`)
+				require.Contains(t, string(b), `"event":"kill"`)
+				for i := 0; i < 100; i++ {
+					require.Contains(t, string(b), `"value":`+strconv.Itoa(i))
+				}
+			} else if requestCounter == 2 {
+				b, err := io.ReadAll(req.Body)
+				require.Nil(t, err)
+
+				require.Contains(t, string(b), `"userId":"asd"`)
+				require.Contains(t, string(b), `"discordId":"asd"`)
+			}
+
+			requestCounter++
+			return &http.Response{
+				Body: io.NopCloser(strings.NewReader(`{"message":"OK"}`)),
+			}, nil
+		},
+	}
+
+	// Test the automatic flush mechanism by waiting for it to trigger
+	client.Track("asd", "kill", nil, nil)
+	wg.Wait()
+	require.Equal(t, 1, requestCounter)
+
+	wg.Add(1)
+	// Fill the queue with batch size elements
+	for i := 0; i < 100; i++ {
+		client.Track("asd", "kill", PointerFrom(i), nil)
+	}
+	wg.Wait()
+	require.Equal(t, 2, requestCounter)
+
+	wg.Add(1)
+	// This will wait for the cooldown
+	flushBegin := time.Now()
+	client.SetIdentifiers("asd", &Identifiers{DiscordID: IdentifierFrom("asd")})
+	require.NotNil(t, client.flushWaiting)
+	wg.Wait()
+	require.Nil(t, client.flushWaiting)
+	require.Equal(t, 3, requestCounter)
+	// Cooldown is 1 second, at least this much time must have passed since then
+	require.True(t, time.Since(flushBegin) > 750*time.Millisecond)
+
+	// Wait for cooldown to end
+	time.Sleep(1 * time.Second)
+
+	// The first will make 1 request, then all the rest will be flushed together
+	identifierCount := 100
+	wg.Add(2)
+	flushBegin = time.Now()
+	for i := 0; i < identifierCount; i++ {
+		go client.SetIdentifiers("asd", &Identifiers{DiscordID: IdentifierFrom("asd")})
+	}
+	wg.Wait()
+	// Cooldown is 1 second, at least this much time must have passed since then
+	require.True(t, time.Since(flushBegin) > 750*time.Millisecond)
+	require.Equal(t, 5, requestCounter)
+
+	require.Len(t, client.eventQueue, 0)
+	require.Len(t, client.identifierQueue, 0)
 }
