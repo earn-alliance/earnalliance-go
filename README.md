@@ -71,12 +71,11 @@ This is used to tell us the user has installed the app and enrich their informat
 // This shows all of our currently supported platforms, but you only need to
 // provide the identifiers that are relevant for your game.
 client.SetIdentifiers("[internal user id]", &ea.Identifiers{
-    AppleID: ea.PointerFrom("..."),
-    DiscordID: ea.PointerFrom("..."),
-    Email: ea.PointerFrom("..."),
-    EpicGamesID: ea.PointerFrom("..."),
-    TwitterID: ea.PointerFrom("..."),
-    WalletAddress: nil, // Will be ignored, same thing as not setting this value.
+    AppleID: ea.IdentifierFrom("..."),
+    DiscordID: ea.IdentifierFrom("..."),
+    Email: ea.IdentifierFrom("..."),
+    EpicGamesID: ea.IdentifierFrom("..."),
+    WalletAddress: nil, // This will be ignored, same thing as not setting this value.
 })
 ```
 
@@ -86,7 +85,7 @@ If however, you pass an empty string, then that identifier will be removed from 
 ```go
 // You can remove a previously set identifier like this.
 client.Identify("[internal user id]", &ea.Identifiers(
-    AppleID: ea.PointerFrom(""), // This will be removed from the user's account.
+    AppleID: ea.RemoveIdentifier(), // This will be removed from the user's account.
 ))
 ```
 

@@ -70,18 +70,19 @@ type (
 	}
 
 	// Identifiers contains the current identifiers supported by Earn Alliance.
-	// The pointers provide an easy way of omitting values. Because iIf the value
-	// is set to an empty string, that identifier will be removed from the user.
+	// The pointers provide an easy way of omitting values. A nil pointer will be omitted
+	// from the JSON when submitting it to the API.
+	// If the value is an empty string, that identifier will be removed from the user.
 	// We provide the generic helper function PointerFrom() to get the
 	// pointer to any value.
 	Identifiers struct {
-		AppleID       *string `json:"appleId,omitempty"`
-		DiscordID     *string `json:"discordId,omitempty"`
-		Email         *string `json:"email,omitempty"`
-		EpicGamesID   *string `json:"epicGamesId,omitempty"`
-		SteamID       *string `json:"steamId,omitempty"`
-		TwitterIdD    *string `json:"twitterId,omitempty"`
-		WalletAddress *string `json:"walletAddress,omitempty"`
+		AppleID       *Identifier `json:"appleId,omitempty"`
+		DiscordID     *Identifier `json:"discordId,omitempty"`
+		Email         *Identifier `json:"email,omitempty"`
+		EpicGamesID   *Identifier `json:"epicGamesId,omitempty"`
+		SteamID       *Identifier `json:"steamId,omitempty"`
+		TwitterId     *Identifier `json:"twitterId,omitempty"`
+		WalletAddress *Identifier `json:"walletAddress,omitempty"`
 	}
 
 	// Traits is a JSON object.

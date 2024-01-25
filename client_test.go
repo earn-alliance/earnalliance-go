@@ -1,6 +1,7 @@
 package earnalliance
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -97,7 +98,7 @@ func TestFlush(t *testing.T) {
 		err := client.Flush()
 		require.NotNil(t, err)
 		client.SetIdentifiers("asd", &Identifiers{
-			WalletAddress: PointerFrom("yoyo"),
+			WalletAddress: IdentifierFrom("yoyo"),
 		})
 		require.NotNil(t, client.flushWaiting)
 		time.Sleep(5 * time.Second)
@@ -261,7 +262,7 @@ func TestSetIdentifiers(t *testing.T) {
 
 		// This will error due to Flush being called because of the 1 batch size
 		client.SetIdentifiers("asd", &Identifiers{
-			DiscordID: PointerFrom("yope"),
+			DiscordID: IdentifierFrom("yope"),
 		})
 
 		wg.Wait()
@@ -312,12 +313,12 @@ func TestSetIdentifiers(t *testing.T) {
 
 		// This will error due to Flush being called because of the 1 batch size
 		client.SetIdentifiers("asd", &Identifiers{
-			DiscordID: PointerFrom("yope"),
+			DiscordID: IdentifierFrom("yope"),
 		})
 
 		// This will start the waiter
 		client.SetIdentifiers("asd", &Identifiers{
-			DiscordID: PointerFrom("yope"),
+			DiscordID: IdentifierFrom("yope"),
 		})
 
 		require.NotNil(t, client.flushWaiting)
@@ -373,7 +374,7 @@ func TestSetIdentifiers(t *testing.T) {
 		defer client.Close()
 
 		client.SetIdentifiers("asd", &Identifiers{
-			DiscordID: PointerFrom("yope"),
+			DiscordID: IdentifierFrom("yope"),
 		})
 
 		require.Nil(t, client.flushWaiting)
@@ -541,70 +542,139 @@ func TestSign(t *testing.T) {
 }
 
 func TestCompleteValid(t *testing.T) {
-	clientID := os.Getenv("ALLIANCE_CLIENT_ID")
-	clientSecret := os.Getenv("ALLIANCE_CLIENT_SECRET")
-	gameID := os.Getenv("ALLIANCE_GAME_ID")
+	t.Run("test some tracks", func(t *testing.T) {
+		clientID := os.Getenv("ALLIANCE_CLIENT_ID")
+		clientSecret := os.Getenv("ALLIANCE_CLIENT_SECRET")
+		gameID := os.Getenv("ALLIANCE_GAME_ID")
 
-	if clientID == "" || clientSecret == "" || gameID == "" {
-		t.SkipNow()
-	}
-
-	errChan := make(chan error)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	// Cancel test in 5 seconds
-	tick := time.NewTicker(5 * time.Second)
-
-	result := true
-
-	go func() {
-		defer wg.Done()
-
-		for {
-			select {
-			case e := <-errChan:
-				fmt.Println(e)
-				result = false
-				return
-			case <-tick.C:
-				result = true
-				return
-			}
+		if clientID == "" || clientSecret == "" || gameID == "" {
+			t.SkipNow()
 		}
-	}()
 
-	client := NewClientBuilder().
-		WithFlushCooldown(5 * time.Second).
-		WithBatchSize(2).
-		WithErrorChannel(errChan).
-		Build()
-	defer client.Close()
+		errChan := make(chan error)
 
-	client.SetIdentifiers("asd", &Identifiers{
-		DiscordID: PointerFrom("yope"),
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		// Cancel test in 5 seconds
+		tick := time.NewTicker(5 * time.Second)
+
+		result := true
+
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case e := <-errChan:
+					fmt.Println(e)
+					result = false
+					return
+				case <-tick.C:
+					result = true
+					return
+				}
+			}
+		}()
+
+		client := NewClientBuilder().
+			WithFlushCooldown(5 * time.Second).
+			WithBatchSize(2).
+			WithErrorChannel(errChan).
+			Build()
+		defer client.Close()
+
+		client.SetIdentifiers("asd", &Identifiers{
+			DiscordID: IdentifierFrom("yope"),
+		})
+
+		require.Nil(t, client.flushWaiting)
+
+		client.Track("asd", "KILL", PointerFrom(1), nil)
+		// This will start the waiter
+		client.Flush()
+
+		require.NotNil(t, client.flushWaiting)
+
+		// This will call process() because of full queue
+		client.Track("asd", "KILL", PointerFrom(2), nil)
+
+		wg.Wait()
+
+		require.Len(t, client.eventQueue, 0)
+		require.Len(t, client.identifierQueue, 0)
+
+		if !result {
+			t.Fatal("valid client complete test failed with error")
+		}
 	})
 
-	require.Nil(t, client.flushWaiting)
+	t.Run("test identifiers", func(t *testing.T) {
+		clientID := os.Getenv("ALLIANCE_CLIENT_ID")
+		clientSecret := os.Getenv("ALLIANCE_CLIENT_SECRET")
+		gameID := os.Getenv("ALLIANCE_GAME_ID")
 
-	client.Track("asd", "KILL", PointerFrom(1), nil)
-	// This will start the waiter
-	client.Flush()
+		if clientID == "" || clientSecret == "" || gameID == "" {
+			t.SkipNow()
+		}
 
-	require.NotNil(t, client.flushWaiting)
+		errChan := make(chan error)
 
-	// This will call process() because of full queue
-	client.Track("asd", "KILL", PointerFrom(2), nil)
+		var wg sync.WaitGroup
+		wg.Add(1)
 
-	wg.Wait()
+		// Cancel test in 5 seconds
+		tick := time.NewTicker(5 * time.Second)
 
-	require.Len(t, client.eventQueue, 0)
-	require.Len(t, client.identifierQueue, 0)
+		result := true
 
-	if !result {
-		t.Fatal("valid client complete test failed with error")
-	}
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case e := <-errChan:
+					fmt.Println(e)
+					result = false
+					return
+				case <-tick.C:
+					result = true
+					return
+				}
+			}
+		}()
+
+		client := NewClientBuilder().
+			WithFlushCooldown(3 * time.Second).
+			WithBatchSize(2).
+			WithErrorChannel(errChan).
+			Build()
+		defer client.Close()
+
+		client.SetIdentifiers("asd", &Identifiers{
+			AppleID:   IdentifierFrom("yope"),
+			DiscordID: IdentifierFrom("yope"),
+		})
+
+		client.SetIdentifiers("asd", &Identifiers{
+			TwitterId: IdentifierFrom("asd"),
+		})
+
+		client.SetIdentifiers("asd", &Identifiers{
+			DiscordID: RemoveIdentifier(),
+		})
+
+		require.NotNil(t, client.flushWaiting)
+
+		wg.Wait()
+
+		require.Len(t, client.eventQueue, 0)
+		require.Len(t, client.identifierQueue, 0)
+
+		if !result {
+			t.Fatal("valid client identifiers test failed with error")
+		}
+	})
 }
 
 func TestCombineTraits(t *testing.T) {
@@ -661,6 +731,65 @@ func TestCombineTraits(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.expected, combineTraits(tc.a, tc.b))
+		})
+	}
+}
+
+func TestIdentifiersJSON(t *testing.T) {
+	testCases := []struct {
+		name     string
+		i        *Identifiers
+		expected string
+	}{
+		{
+			name:     "empty",
+			i:        &Identifiers{},
+			expected: "{}",
+		},
+		{
+			name: "apple id nil",
+			i: &Identifiers{
+				AppleID: nil,
+			},
+			expected: "{}",
+		},
+		{
+			name: "apple id empty string",
+			i: &Identifiers{
+				AppleID: IdentifierFrom(""),
+			},
+			expected: `{"appleId":null}`,
+		},
+		{
+			name: "apple id normal string",
+			i: &Identifiers{
+				AppleID: IdentifierFrom("normal"),
+			},
+			expected: `{"appleId":"normal"}`,
+		},
+		{
+			name: "apple and twitter id empty string",
+			i: &Identifiers{
+				AppleID:   IdentifierFrom(""),
+				TwitterId: IdentifierFrom(""),
+			},
+			expected: `{"appleId":null,"twitterId":null}`,
+		},
+		{
+			name: "apple and twitter id normal strings",
+			i: &Identifiers{
+				AppleID:   IdentifierFrom("a"),
+				TwitterId: IdentifierFrom("b"),
+			},
+			expected: `{"appleId":"a","twitterId":"b"}`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := json.Marshal(tc.i)
+			require.Nil(t, err)
+			require.Equal(t, tc.expected, string(s))
 		})
 	}
 }
