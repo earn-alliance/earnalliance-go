@@ -359,8 +359,6 @@ func (c *Client) send(msg []byte) error {
 		return fmt.Errorf("failed to decode response body: %w", err)
 	}
 
-	fmt.Println(m)
-
 	if b, ok := m["message"]; ok {
 		if s, ok := b.(string); ok {
 			if s == "OK" {
