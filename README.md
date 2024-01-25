@@ -134,13 +134,17 @@ sense for your game. This allows for natural challenge scopes like "Kill X playe
 in a match".
 
 ```go
-// Generates unique group id which will be associated with all the events
-round := client.StartRound(nil)
+// If the first parameter is empty, the library will generate a fresh UUID.
+// And this ID will be the Group ID of events tracked for this round.
+round := client.StartRound("", nil)
 round.Track("[internal user id]", "KILL_ZOMBIE")
+
+// You can set the round's ID yourself when you first create it.
+round := client.StartRound("[my-custom-id]", nil)
 
 // Additional traits can be set when starting the round, which will be added
 // to all events that are tracked for the specific round.
-round := client.StartRound(ea.Traits{ "map": "nuclear_wasteland" })
+round := client.StartRound("", ea.Traits{ "map": "nuclear_wasteland" })
 round.Track("[internal user id]", "KILL_ZOMBIE")
 ```
 
