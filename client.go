@@ -19,7 +19,7 @@ type (
 	// Client is the gateway to the Earn Alliance API.
 	// It is concurrency safe after CreateClient is called.
 	// It contains an event queue which sends batchSize (can be set via options)
-	// events to the API. This queue is LIFO.
+	// events to the API. This queue is FIFO.
 	Client struct {
 		// Initialization args
 		batchSize     int
@@ -182,6 +182,7 @@ func (c *Client) StartRound(id string, traits Traits) *Round {
 // The traits are combined with the round's traits. The traits passed to this function
 // will overwrite the round's traits for this event when they are combined.
 // If the event queue hits the batch size limit, then Flush will be called.
+// You can use the PointerFrom function to create the value pointer.
 func (r *Round) Track(userID string, eventName string, value *int, traits Traits) {
 	r.c.appendEvent(&event{
 		GroupID: r.id,

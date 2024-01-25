@@ -609,6 +609,67 @@ func TestCompleteValid(t *testing.T) {
 		}
 	})
 
+	t.Run("test round tracking", func(t *testing.T) {
+		clientID := os.Getenv("ALLIANCE_CLIENT_ID")
+		clientSecret := os.Getenv("ALLIANCE_CLIENT_SECRET")
+		gameID := os.Getenv("ALLIANCE_GAME_ID")
+
+		if clientID == "" || clientSecret == "" || gameID == "" {
+			t.SkipNow()
+		}
+
+		errChan := make(chan error)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		// Cancel test in 5 seconds
+		tick := time.NewTicker(5 * time.Second)
+
+		result := true
+
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case e := <-errChan:
+					fmt.Println(e)
+					result = false
+					return
+				case <-tick.C:
+					result = true
+					return
+				}
+			}
+		}()
+
+		client := NewClientBuilder().
+			WithFlushCooldown(5 * time.Second).
+			WithBatchSize(3).
+			WithErrorChannel(errChan).
+			Build()
+		defer client.Close()
+
+		// 1st event
+		client.StartGame("asd-test-1")
+
+		r := client.StartRound("round-id-1", Traits{"test": "yeap"})
+		// 2nd event
+		r.Track("asd-test-1", "WIN", PointerFrom(10), Traits{"round": "flawless"})
+		// 3rd event, this calls process
+		r.Track("asd-test-1", "DIE", nil, Traits{"test": "yup"})
+
+		wg.Wait()
+
+		require.Len(t, client.eventQueue, 0)
+		require.Len(t, client.identifierQueue, 0)
+
+		if !result {
+			t.Fatal("valid client round track test failed with error")
+		}
+	})
+
 	t.Run("test identifiers", func(t *testing.T) {
 		clientID := os.Getenv("ALLIANCE_CLIENT_ID")
 		clientSecret := os.Getenv("ALLIANCE_CLIENT_SECRET")
